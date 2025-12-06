@@ -32,7 +32,7 @@
 
     <div id="global-loader" class="fixed inset-0 bg-white bg-opacity-90 z-[60] flex flex-col items-center justify-center hidden">
         <div class="loader mb-4"></div>
-        <p class="text-green-700 font-bold animate-pulse">Checking the North Pole Database...</p>
+        <p class="text-green-700 font-bold animate-pulse">Syncing with North Pole...</p>
     </div>
 
     <nav class="bg-red-700 text-white p-4 shadow-lg sticky top-0 z-50">
@@ -54,7 +54,7 @@
             <div class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Username</label>
-                    <input type="text" id="login-user" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none" placeholder="e.g. mom">
+                    <input type="text" id="login-user" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none" placeholder="e.g. dad">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Password</label>
@@ -63,7 +63,6 @@
                 <button onclick="attemptLogin()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">Open List</button>
                 <p id="login-error" class="text-red-500 text-sm text-center hidden">Incorrect credentials or connection error.</p>
             </div>
-            <p class="mt-4 text-xs text-gray-400 text-center">Powered by JSONBin.io</p>
         </div>
 
         <div id="view-dashboard" class="hidden">
@@ -127,7 +126,7 @@
 
     <script>
         // ==========================================
-        // ⚙️ CONFIGURATION - MAKING A CHANGE TO UPDATE DNS MANUALLY
+        // ⚙️ CONFIGURATION - EDIT THIS SECTION
         // ==========================================
         const CONFIG = {
             BIN_ID: "69346e8cae596e708f87d423", 
@@ -139,7 +138,7 @@
             need: { label: "Something I Need", color: "border-blue-500", bg: "bg-blue-50" },
             wear: { label: "Something to Wear", color: "border-purple-500", bg: "bg-purple-50" },
             read: { label: "Something to Read", color: "border-yellow-500", bg: "bg-yellow-50" },
-            want: { label: "Something I'd Like", color: "border-green-500", bg: "bg-green-50" }
+            want: { label: "Something I Want", color: "border-green-500", bg: "bg-green-50" }
         };
 
         // Application State
@@ -147,51 +146,72 @@
         let currentUser = null;
         let viewingUser = null;
 
-        // --- API INTERACTIONS ---
+        // --- CORE DATABASE FUNCTIONS ---
 
+        function toggleLoader(show) {
+            const el = document.getElementById('global-loader');
+            show ? el.classList.remove('hidden') : el.classList.add('hidden');
+        }
+
+        // 1. Simple Fetch (Read Only)
         async function fetchBin() {
             toggleLoader(true);
             try {
                 const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}/latest`, {
-                    headers: {
-                        'X-Access-Key': CONFIG.ACCESS_KEY
-                    }
+                    headers: { 'X-Access-Key': CONFIG.ACCESS_KEY }
                 });
                 
                 if (!response.ok) throw new Error('Failed to fetch');
-                
                 const json = await response.json();
-                appData = json.record; // V3 wraps data in a 'record' object
+                appData = json.record;
                 return true;
             } catch (error) {
                 console.error("Database Error:", error);
-                alert("Could not connect to the Christmas Database! Check your API Keys.");
+                alert("Could not connect to the database! Check console.");
                 return false;
             } finally {
                 toggleLoader(false);
             }
         }
 
-        async function updateBin(newData) {
+        // 2. MODIFY AND SAVE (The "Fetch-Merge-Push" Pattern)
+        // This function minimizes race conditions by fetching fresh data, 
+        // applying a change immediately, and pushing it back.
+        async function modifyAndSave(modificationCallback) {
             toggleLoader(true);
             try {
-                const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}`, {
+                // A. GET Latest (Refresh)
+                const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}/latest`, {
+                    headers: { 'X-Access-Key': CONFIG.ACCESS_KEY }
+                });
+                if (!response.ok) throw new Error('Fetch failed');
+                
+                const json = await response.json();
+                let latestCloudData = json.record;
+
+                // B. APPLY Change to the FRESH data (not our stale local data)
+                modificationCallback(latestCloudData);
+
+                // C. PUT (Save)
+                const saveResponse = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
                         'X-Access-Key': CONFIG.ACCESS_KEY
                     },
-                    body: JSON.stringify(newData)
+                    body: JSON.stringify(latestCloudData)
                 });
 
-                if (!response.ok) throw new Error('Failed to update');
+                if (!saveResponse.ok) throw new Error('Update failed');
                 
-                const json = await response.json();
-                appData = json.record; // Update local state with confirmed server state
+                // D. Update Local State
+                const saveJson = await saveResponse.json();
+                appData = saveJson.record; // Sync local app with server result
                 return true;
+
             } catch (error) {
-                console.error("Save Error:", error);
-                alert("Failed to save changes. Please try again.");
+                console.error("Concurrency Error:", error);
+                alert("Sync Error: Someone else might be updating the list at the same time. Please try again!");
                 return false;
             } finally {
                 toggleLoader(false);
@@ -201,16 +221,14 @@
         // --- AUTHENTICATION ---
 
         async function attemptLogin() {
-            // Fetch fresh data on login attempt to ensure users are up to date
-            const success = await fetchBin();
+            const success = await fetchBin(); // Initial Load
             if(!success) return;
 
             const userIn = document.getElementById('login-user').value.toLowerCase().trim();
             const passIn = document.getElementById('login-pass').value;
             
-            // Safety check for empty DB
             if(!appData.users) {
-                alert("Database is empty! Did you initialize the JSONBin?");
+                alert("Database seems empty (no users found). Did you initialize the JSONBin?");
                 return;
             }
 
@@ -235,7 +253,7 @@
             document.getElementById('login-pass').value = '';
         }
 
-        // --- VIEW CONTROLLERS ---
+        // --- UI NAVIGATION ---
 
         function switchView(viewId) {
             ['view-login', 'view-dashboard', 'view-list'].forEach(id => {
@@ -244,16 +262,10 @@
             document.getElementById(viewId).classList.remove('hidden');
         }
 
-        function toggleLoader(show) {
-            const el = document.getElementById('global-loader');
-            show ? el.classList.remove('hidden') : el.classList.add('hidden');
-        }
-
-        // --- DASHBOARD ---
+        // --- DASHBOARD LOGIC ---
 
         async function showDashboard() {
-            // Refresh data when hitting dashboard to ensure we see latest list counts/users
-            await fetchBin(); 
+            await fetchBin(); // Refresh on dashboard load
             switchView('view-dashboard');
             
             const grid = document.getElementById('family-grid');
@@ -262,7 +274,6 @@
             appData.users.forEach(u => {
                 const btn = document.createElement('div');
                 const isMe = u.username === currentUser.username;
-                // Count items safely
                 const itemCount = (appData.wishlists[u.username] || []).length;
                 
                 btn.className = `p-6 rounded-xl shadow-sm cursor-pointer transition transform hover:-translate-y-1 hover:shadow-md flex items-center justify-between border ${isMe ? 'bg-green-50 border-green-500' : 'bg-white border-gray-200'}`;
@@ -290,15 +301,11 @@
             const isMyList = currentUser.username === viewingUser.username;
             document.getElementById('list-owner-name').innerText = isMyList ? "My Wishlist" : `${viewingUser.name}'s Wishlist`;
             
-            // Show/Hide Add Button
+            // Toggle Add Button
             const addBtn = document.getElementById('btn-add-item');
-            if (isMyList) {
-                addBtn.classList.remove('hidden');
-            } else {
-                addBtn.classList.add('hidden');
-            }
+            isMyList ? addBtn.classList.remove('hidden') : addBtn.classList.add('hidden');
             
-            document.getElementById('add-item-form').classList.add('hidden'); // Reset form
+            document.getElementById('add-item-form').classList.add('hidden');
             renderItems();
         }
 
@@ -348,7 +355,7 @@
                             actionButton = `<button onclick="togglePurchased(${item.id})" class="mt-3 w-full py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition">Mark as Purchased</button>`;
                         }
                     } else {
-                        // VIEWING MYSELF (No purchased status shown)
+                        // VIEWING MYSELF
                         actionButton = `<button onclick="deleteItem(${item.id})" class="mt-3 text-xs text-red-400 hover:text-red-600 underline">Remove Item</button>`;
                     }
 
@@ -374,7 +381,7 @@
             });
         }
 
-        // --- ACTIONS (Async) ---
+        // --- ACTIONS (Using modifyAndSave) ---
 
         function toggleAddForm() {
             document.getElementById('add-item-form').classList.toggle('hidden');
@@ -388,9 +395,6 @@
 
             if(!name) return alert("Please enter a name!");
 
-            // 1. Fetch latest data to avoid race conditions
-            await fetchBin();
-
             const newItem = {
                 id: Date.now(),
                 category: cat,
@@ -400,17 +404,15 @@
                 purchased: false
             };
 
-            // Initialize array if undefined
-            if (!appData.wishlists[currentUser.username]) {
-                appData.wishlists[currentUser.username] = [];
-            }
-            
-            appData.wishlists[currentUser.username].push(newItem);
-            
-            // 2. Push update
-            const success = await updateBin(appData);
+            // Use concurrency helper
+            const success = await modifyAndSave((data) => {
+                if (!data.wishlists[currentUser.username]) {
+                    data.wishlists[currentUser.username] = [];
+                }
+                data.wishlists[currentUser.username].push(newItem);
+            });
+
             if(success) {
-                // Clear inputs
                 document.getElementById('new-item-name').value = '';
                 document.getElementById('new-item-link').value = '';
                 document.getElementById('new-item-img').value = '';
@@ -422,24 +424,24 @@
         async function deleteItem(id) {
             if(!confirm("Delete this item?")) return;
             
-            await fetchBin(); // Refresh first
-            appData.wishlists[currentUser.username] = appData.wishlists[currentUser.username].filter(i => i.id !== id);
-            
-            const success = await updateBin(appData);
+            const success = await modifyAndSave((data) => {
+                const list = data.wishlists[currentUser.username] || [];
+                data.wishlists[currentUser.username] = list.filter(i => i.id !== id);
+            });
+
             if(success) renderItems();
         }
 
         async function togglePurchased(itemId) {
-            await fetchBin(); // Refresh first
-            
-            const userLists = appData.wishlists[viewingUser.username];
-            const item = userLists.find(i => i.id === itemId);
-            
-            if(item) {
-                item.purchased = !item.purchased;
-                const success = await updateBin(appData);
-                if(success) renderItems();
-            }
+            const success = await modifyAndSave((data) => {
+                const list = data.wishlists[viewingUser.username] || [];
+                const item = list.find(i => i.id === itemId);
+                if(item) {
+                    item.purchased = !item.purchased;
+                }
+            });
+
+            if(success) renderItems();
         }
 
     </script>
