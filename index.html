@@ -135,7 +135,7 @@
         // ==========================================
         const CONFIG = {
             BIN_ID: "69346e8cae596e708f87d423", 
-            ACCESS_KEY: "$2a$10$uwGU717zEGwC//qWwUKYWOA/M29ryWckj2hFh8ccLIrTdv0O.W/76" 
+            ACCESS_KEY: "$2a$10$uwGU717zEGwC//qWwUKYWOA/M29ryWckj2hFh8ccLIrTdv0O.W/76"
         };
         // ==========================================
 
@@ -160,10 +160,8 @@
                     toggleLoader(true);
                     document.getElementById('loader-msg').innerText = "Restoring Session...";
                     
-                    // Fetch data to sync
                     const success = await fetchBin();
                     if (success) {
-                        // Validate user still exists in DB
                         const validUser = appData.users.find(u => u.username === userObj.username);
                         if (validUser) {
                             currentUser = validUser;
@@ -171,7 +169,7 @@
                             document.getElementById('nav-actions').classList.remove('hidden');
                             showDashboard();
                         } else {
-                            logout(); // User no longer valid
+                            logout();
                         }
                     }
                 } catch (e) {
@@ -262,9 +260,7 @@
 
             if (user) {
                 currentUser = user;
-                // SAVE SESSION TO LOCAL STORAGE
                 localStorage.setItem('xmas_user', JSON.stringify(user));
-                
                 document.getElementById('login-error').classList.add('hidden');
                 document.getElementById('welcome-msg').innerText = `Welcome, ${user.name}!`;
                 document.getElementById('nav-actions').classList.remove('hidden');
@@ -277,7 +273,7 @@
         function logout() {
             currentUser = null;
             viewingUser = null;
-            localStorage.removeItem('xmas_user'); // CLEAR SESSION
+            localStorage.removeItem('xmas_user');
             document.getElementById('nav-actions').classList.add('hidden');
             switchView('view-login');
             document.getElementById('login-pass').value = '';
@@ -290,13 +286,12 @@
                 document.getElementById(id).classList.add('hidden');
             });
             document.getElementById(viewId).classList.remove('hidden');
-            window.scrollTo(0,0); // Scroll to top on view change
+            window.scrollTo(0,0);
         }
 
         // --- DASHBOARD ---
 
         async function showDashboard() {
-            // Background refresh, no blocking loader needed if we already have data
             if(!appData) await fetchBin(); 
             else fetchBin().then(() => renderDashboardGrid()); 
             
@@ -326,7 +321,6 @@
                     </div>
                     <div class="text-gray-300">➜</div>
                 `;
-                // Add explicit Touch End support for better mobile responsiveness
                 btn.onclick = (e) => {
                     e.preventDefault();
                     loadWishlist(u.username);
@@ -335,7 +329,7 @@
             });
         }
 
-        // --- WISHLIST LOGIC ---
+        // --- WISHLIST LOGIC (UPDATED WITH OWNERSHIP) ---
 
         function loadWishlist(targetUsername) {
             viewingUser = appData.users.find(u => u.username === targetUsername);
@@ -384,18 +378,42 @@
                     let overlay = '';
                     let actionButton = '';
 
+                    // LOGIC: Is this bought?
+                    // It is bought if: 1. It has a 'purchasedBy' user OR 2. It has 'purchased: true' (Legacy)
+                    const boughtByMe = item.purchasedBy === currentUser.username;
+                    const isLegacyBought = item.purchased === true;
+                    const isBought = item.purchasedBy || isLegacyBought;
+
                     if (!isMyList) {
-                        if (item.purchased) {
+                        // VIEWING OTHERS
+                        if (isBought) {
+                            // Logic: Can I undo this?
+                            // Only if I bought it. If it's legacy or bought by someone else, NO undo.
+                            
+                            let undoBtn = '';
+                            let label = '🎁 BOUGHT';
+                            
+                            if (boughtByMe) {
+                                label = 'YOU BOUGHT THIS';
+                                undoBtn = `<button type="button" onclick="togglePurchased(${item.id})" class="mt-2 text-xs bg-white text-green-800 px-3 py-1 rounded hover:bg-gray-100 font-bold border border-green-200">Undo</button>`;
+                            } else {
+                                // Bought by someone else or Legacy. No Undo allowed.
+                                undoBtn = `<span class="mt-2 text-[10px] text-white opacity-80 uppercase tracking-wider font-normal">No peeking</span>`;
+                            }
+
                             overlay = `
-                                <div class="absolute inset-0 bg-green-600 bg-opacity-90 flex flex-col items-center justify-center text-white font-bold z-10 animate-fade-in">
-                                    <span class="text-xl">🎁 BOUGHT</span>
-                                    <button type="button" onclick="togglePurchased(${item.id})" class="mt-2 text-xs bg-white text-green-800 px-3 py-1 rounded hover:bg-gray-100">Undo</button>
+                                <div class="absolute inset-0 bg-green-600 bg-opacity-95 flex flex-col items-center justify-center text-white font-bold z-10 animate-fade-in text-center p-2">
+                                    <span class="text-lg leading-tight">${label}</span>
+                                    ${undoBtn}
                                 </div>
                             `;
                         } else {
+                            // Not bought yet
                             actionButton = `<button type="button" onclick="togglePurchased(${item.id})" class="mt-3 w-full py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition">Mark as Purchased</button>`;
                         }
                     } else {
+                        // VIEWING MYSELF (Owner)
+                        // Owner sees Remove button (purchased status is hidden)
                         actionButton = `<button type="button" onclick="deleteItem(${item.id})" class="mt-3 text-xs text-red-400 hover:text-red-600 underline">Remove Item</button>`;
                     }
 
@@ -440,8 +458,8 @@
                 category: cat,
                 name: name,
                 link: link,
-                img: img,
-                purchased: false
+                img: img
+                // We do NOT set purchased properties here
             };
 
             const success = await modifyAndSave((data) => {
@@ -473,7 +491,19 @@
             const success = await modifyAndSave((data) => {
                 const list = data.wishlists[viewingUser.username] || [];
                 const item = list.find(i => i.id === itemId);
-                if(item) item.purchased = !item.purchased;
+                
+                if(item) {
+                    // LOGIC:
+                    // 1. If currently marked by ME -> Unmark it.
+                    if (item.purchasedBy === currentUser.username) {
+                        delete item.purchasedBy;
+                    }
+                    // 2. If it is NOT marked by anyone (and not legacy bought) -> Mark it as ME.
+                    else if (!item.purchasedBy && item.purchased !== true) {
+                        item.purchasedBy = currentUser.username;
+                    }
+                    // 3. If marked by someone else or Legacy -> Do nothing (security)
+                }
             });
             if(success) renderItems();
         }
