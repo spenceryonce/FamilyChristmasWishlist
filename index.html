@@ -130,14 +130,6 @@
     </main>
 
     <script>
-        // ==========================================
-        // ⚙️ CONFIGURATION - EDIT THIS SECTION
-        // ==========================================
-        const CONFIG = {
-            BIN_ID: "69346e8cae596e708f87d423", 
-            ACCESS_KEY: "$2a$10$uwGU717zEGwC//qWwUKYWOA/M29ryWckj2hFh8ccLIrTdv0O.W/76"
-        };
-        // ==========================================
 
         const categories = {
             need: { label: "Something I Need", color: "border-blue-500", bg: "bg-blue-50" },
@@ -188,61 +180,65 @@
             show ? el.classList.remove('hidden') : el.classList.add('hidden');
         }
 
-        async function fetchBin() {
-            try {
-                const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}/latest`, {
-                    headers: { 'X-Access-Key': CONFIG.ACCESS_KEY }
-                });
-                if (!response.ok) throw new Error('Failed to fetch');
-                const json = await response.json();
-                appData = json.record;
-                return true;
-            } catch (error) {
-                console.error("Database Error:", error);
-                alert("Connection Error. Please refresh.");
-                return false;
-            }
+        // Replace this with your actual Worker URL
+    const WORKER_URL = "https://proxy-wishlist.flipoutpk.workers.dev";
+
+    async function fetchBin() {
+        try {
+            // No headers needed here, the Worker handles auth
+            const response = await fetch(WORKER_URL);
+            
+            if (!response.ok) throw new Error('Failed to fetch');
+            
+            const json = await response.json();
+            appData = json.record; // Worker passes through the JSONbin structure
+            return true;
+        } catch (error) {
+            console.error("Database Error:", error);
+            alert("Connection Error. Please refresh.");
+            return false;
         }
+    }
 
-        async function modifyAndSave(modificationCallback) {
-            toggleLoader(true);
-            try {
-                // 1. GET Latest
-                const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}/latest`, {
-                    headers: { 'X-Access-Key': CONFIG.ACCESS_KEY }
-                });
-                if (!response.ok) throw new Error('Fetch failed');
-                
-                const json = await response.json();
-                let latestCloudData = json.record;
+    async function modifyAndSave(modificationCallback) {
+        toggleLoader(true);
+        try {
+            // 1. GET Latest (Via Worker)
+            const response = await fetch(WORKER_URL);
+            if (!response.ok) throw new Error('Fetch failed');
+            
+            const json = await response.json();
+            let latestCloudData = json.record;
 
-                // 2. APPLY Change
-                modificationCallback(latestCloudData);
+            // 2. APPLY Change (Local Logic)
+            // This runs exactly as before
+            modificationCallback(latestCloudData);
 
-                // 3. PUT (Save)
-                const saveResponse = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}`, {
-                    method: 'PUT',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'X-Access-Key': CONFIG.ACCESS_KEY
-                    },
-                    body: JSON.stringify(latestCloudData)
-                });
+            // 3. PUT (Save Via Worker)
+            // We send the data to the Worker, which adds the key and sends to JSONbin
+            const saveResponse = await fetch(WORKER_URL, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                    // No X-Access-Key here!
+                },
+                body: JSON.stringify(latestCloudData)
+            });
 
-                if (!saveResponse.ok) throw new Error('Update failed');
-                
-                const saveJson = await saveResponse.json();
-                appData = saveJson.record; 
-                return true;
+            if (!saveResponse.ok) throw new Error('Update failed');
+            
+            const saveJson = await saveResponse.json();
+            appData = saveJson.record; 
+            return true;
 
-            } catch (error) {
-                console.error("Concurrency Error:", error);
-                alert("Sync Error: Someone else might be updating the list. Try again!");
-                return false;
-            } finally {
-                toggleLoader(false);
-            }
+        } catch (error) {
+            console.error("Concurrency Error:", error);
+            alert("Sync Error: Someone else might be updating the list. Try again!");
+            return false;
+        } finally {
+            toggleLoader(false);
         }
+    }
 
         // --- AUTHENTICATION ---
 
