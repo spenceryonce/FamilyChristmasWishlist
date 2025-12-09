@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Family Christmas Wishlist</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
@@ -26,13 +26,18 @@
             animation: spin 1s linear infinite;
         }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* MOBILE FIX: Prevent Pull-to-Refresh refreshing the app */
+        body {
+            overscroll-behavior-y: contain; 
+        }
     </style>
 </head>
-<body class="bg-slate-50 min-h-screen font-sans text-slate-800 snow-bg">
+<body class="bg-slate-50 min-h-screen font-sans text-slate-800 snow-bg select-none">
 
     <div id="global-loader" class="fixed inset-0 bg-white bg-opacity-90 z-[60] flex flex-col items-center justify-center hidden">
         <div class="loader mb-4"></div>
-        <p class="text-green-700 font-bold animate-pulse">Syncing with North Pole...</p>
+        <p id="loader-msg" class="text-green-700 font-bold animate-pulse">Syncing with North Pole...</p>
     </div>
 
     <nav class="bg-red-700 text-white p-4 shadow-lg sticky top-0 z-50">
@@ -54,13 +59,13 @@
             <div class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Username</label>
-                    <input type="text" id="login-user" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none" placeholder="e.g. dad">
+                    <input type="text" id="login-user" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none" placeholder="e.g. dad" autocapitalize="none">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Password</label>
                     <input type="password" id="login-pass" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none">
                 </div>
-                <button onclick="attemptLogin()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">Open List</button>
+                <button type="button" onclick="attemptLogin()" class="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded transition">Open List</button>
                 <p id="login-error" class="text-red-500 text-sm text-center hidden">Incorrect credentials or connection error.</p>
             </div>
         </div>
@@ -114,8 +119,8 @@
                     </div>
                 </div>
                 <div class="mt-4 flex gap-2 justify-end">
-                    <button onclick="toggleAddForm()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Cancel</button>
-                    <button onclick="saveNewItem()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 shadow">Save to List</button>
+                    <button type="button" onclick="toggleAddForm()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Cancel</button>
+                    <button type="button" onclick="saveNewItem()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 shadow">Save to List</button>
                 </div>
             </div>
 
@@ -146,6 +151,38 @@
         let currentUser = null;
         let viewingUser = null;
 
+        // --- INIT APP (Fixes Refresh Bug) ---
+        window.addEventListener('DOMContentLoaded', async () => {
+            const savedUser = localStorage.getItem('xmas_user');
+            if (savedUser) {
+                try {
+                    const userObj = JSON.parse(savedUser);
+                    toggleLoader(true);
+                    document.getElementById('loader-msg').innerText = "Restoring Session...";
+                    
+                    // Fetch data to sync
+                    const success = await fetchBin();
+                    if (success) {
+                        // Validate user still exists in DB
+                        const validUser = appData.users.find(u => u.username === userObj.username);
+                        if (validUser) {
+                            currentUser = validUser;
+                            document.getElementById('welcome-msg').innerText = `Welcome, ${currentUser.name}!`;
+                            document.getElementById('nav-actions').classList.remove('hidden');
+                            showDashboard();
+                        } else {
+                            logout(); // User no longer valid
+                        }
+                    }
+                } catch (e) {
+                    console.error("Session restore failed", e);
+                    logout();
+                } finally {
+                    toggleLoader(false);
+                }
+            }
+        });
+
         // --- CORE DATABASE FUNCTIONS ---
 
         function toggleLoader(show) {
@@ -153,34 +190,26 @@
             show ? el.classList.remove('hidden') : el.classList.add('hidden');
         }
 
-        // 1. Simple Fetch (Read Only)
         async function fetchBin() {
-            toggleLoader(true);
             try {
                 const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}/latest`, {
                     headers: { 'X-Access-Key': CONFIG.ACCESS_KEY }
                 });
-                
                 if (!response.ok) throw new Error('Failed to fetch');
                 const json = await response.json();
                 appData = json.record;
                 return true;
             } catch (error) {
                 console.error("Database Error:", error);
-                alert("Could not connect to the database! Check console.");
+                alert("Connection Error. Please refresh.");
                 return false;
-            } finally {
-                toggleLoader(false);
             }
         }
 
-        // 2. MODIFY AND SAVE (The "Fetch-Merge-Push" Pattern)
-        // This function minimizes race conditions by fetching fresh data, 
-        // applying a change immediately, and pushing it back.
         async function modifyAndSave(modificationCallback) {
             toggleLoader(true);
             try {
-                // A. GET Latest (Refresh)
+                // 1. GET Latest
                 const response = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}/latest`, {
                     headers: { 'X-Access-Key': CONFIG.ACCESS_KEY }
                 });
@@ -189,10 +218,10 @@
                 const json = await response.json();
                 let latestCloudData = json.record;
 
-                // B. APPLY Change to the FRESH data (not our stale local data)
+                // 2. APPLY Change
                 modificationCallback(latestCloudData);
 
-                // C. PUT (Save)
+                // 3. PUT (Save)
                 const saveResponse = await fetch(`https://api.jsonbin.io/v3/b/${CONFIG.BIN_ID}`, {
                     method: 'PUT',
                     headers: {
@@ -204,14 +233,13 @@
 
                 if (!saveResponse.ok) throw new Error('Update failed');
                 
-                // D. Update Local State
                 const saveJson = await saveResponse.json();
-                appData = saveJson.record; // Sync local app with server result
+                appData = saveJson.record; 
                 return true;
 
             } catch (error) {
                 console.error("Concurrency Error:", error);
-                alert("Sync Error: Someone else might be updating the list at the same time. Please try again!");
+                alert("Sync Error: Someone else might be updating the list. Try again!");
                 return false;
             } finally {
                 toggleLoader(false);
@@ -221,21 +249,22 @@
         // --- AUTHENTICATION ---
 
         async function attemptLogin() {
-            const success = await fetchBin(); // Initial Load
+            toggleLoader(true);
+            const success = await fetchBin(); 
+            toggleLoader(false);
+            
             if(!success) return;
 
             const userIn = document.getElementById('login-user').value.toLowerCase().trim();
             const passIn = document.getElementById('login-pass').value;
             
-            if(!appData.users) {
-                alert("Database seems empty (no users found). Did you initialize the JSONBin?");
-                return;
-            }
-
             const user = appData.users.find(u => u.username === userIn && u.password === passIn);
 
             if (user) {
                 currentUser = user;
+                // SAVE SESSION TO LOCAL STORAGE
+                localStorage.setItem('xmas_user', JSON.stringify(user));
+                
                 document.getElementById('login-error').classList.add('hidden');
                 document.getElementById('welcome-msg').innerText = `Welcome, ${user.name}!`;
                 document.getElementById('nav-actions').classList.remove('hidden');
@@ -248,6 +277,7 @@
         function logout() {
             currentUser = null;
             viewingUser = null;
+            localStorage.removeItem('xmas_user'); // CLEAR SESSION
             document.getElementById('nav-actions').classList.add('hidden');
             switchView('view-login');
             document.getElementById('login-pass').value = '';
@@ -260,23 +290,32 @@
                 document.getElementById(id).classList.add('hidden');
             });
             document.getElementById(viewId).classList.remove('hidden');
+            window.scrollTo(0,0); // Scroll to top on view change
         }
 
-        // --- DASHBOARD LOGIC ---
+        // --- DASHBOARD ---
 
         async function showDashboard() {
-            await fetchBin(); // Refresh on dashboard load
-            switchView('view-dashboard');
+            // Background refresh, no blocking loader needed if we already have data
+            if(!appData) await fetchBin(); 
+            else fetchBin().then(() => renderDashboardGrid()); 
             
+            switchView('view-dashboard');
+            renderDashboardGrid();
+        }
+
+        function renderDashboardGrid() {
             const grid = document.getElementById('family-grid');
             grid.innerHTML = '';
+            
+            if(!appData || !appData.users) return;
 
             appData.users.forEach(u => {
                 const btn = document.createElement('div');
                 const isMe = u.username === currentUser.username;
                 const itemCount = (appData.wishlists[u.username] || []).length;
                 
-                btn.className = `p-6 rounded-xl shadow-sm cursor-pointer transition transform hover:-translate-y-1 hover:shadow-md flex items-center justify-between border ${isMe ? 'bg-green-50 border-green-500' : 'bg-white border-gray-200'}`;
+                btn.className = `p-6 rounded-xl shadow-sm cursor-pointer transition transform hover:-translate-y-1 hover:shadow-md flex items-center justify-between border select-none active:scale-95 ${isMe ? 'bg-green-50 border-green-500' : 'bg-white border-gray-200'}`;
                 btn.innerHTML = `
                     <div class="flex items-center gap-4">
                         <div class="text-4xl w-12 h-12 flex items-center justify-center bg-gray-100 rounded-full">${u.avatar}</div>
@@ -287,7 +326,11 @@
                     </div>
                     <div class="text-gray-300">➜</div>
                 `;
-                btn.onclick = () => loadWishlist(u.username);
+                // Add explicit Touch End support for better mobile responsiveness
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    loadWishlist(u.username);
+                };
                 grid.appendChild(btn);
             });
         }
@@ -301,7 +344,6 @@
             const isMyList = currentUser.username === viewingUser.username;
             document.getElementById('list-owner-name').innerText = isMyList ? "My Wishlist" : `${viewingUser.name}'s Wishlist`;
             
-            // Toggle Add Button
             const addBtn = document.getElementById('btn-add-item');
             isMyList ? addBtn.classList.remove('hidden') : addBtn.classList.add('hidden');
             
@@ -343,20 +385,18 @@
                     let actionButton = '';
 
                     if (!isMyList) {
-                        // VIEWING OTHERS
                         if (item.purchased) {
                             overlay = `
                                 <div class="absolute inset-0 bg-green-600 bg-opacity-90 flex flex-col items-center justify-center text-white font-bold z-10 animate-fade-in">
                                     <span class="text-xl">🎁 BOUGHT</span>
-                                    <button onclick="togglePurchased(${item.id})" class="mt-2 text-xs bg-white text-green-800 px-3 py-1 rounded hover:bg-gray-100">Undo</button>
+                                    <button type="button" onclick="togglePurchased(${item.id})" class="mt-2 text-xs bg-white text-green-800 px-3 py-1 rounded hover:bg-gray-100">Undo</button>
                                 </div>
                             `;
                         } else {
-                            actionButton = `<button onclick="togglePurchased(${item.id})" class="mt-3 w-full py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition">Mark as Purchased</button>`;
+                            actionButton = `<button type="button" onclick="togglePurchased(${item.id})" class="mt-3 w-full py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition">Mark as Purchased</button>`;
                         }
                     } else {
-                        // VIEWING MYSELF
-                        actionButton = `<button onclick="deleteItem(${item.id})" class="mt-3 text-xs text-red-400 hover:text-red-600 underline">Remove Item</button>`;
+                        actionButton = `<button type="button" onclick="deleteItem(${item.id})" class="mt-3 text-xs text-red-400 hover:text-red-600 underline">Remove Item</button>`;
                     }
 
                     const imgUrl = item.img || 'https://placehold.co/100x100?text=Gift';
@@ -381,7 +421,7 @@
             });
         }
 
-        // --- ACTIONS (Using modifyAndSave) ---
+        // --- ACTIONS ---
 
         function toggleAddForm() {
             document.getElementById('add-item-form').classList.toggle('hidden');
@@ -404,7 +444,6 @@
                 purchased: false
             };
 
-            // Use concurrency helper
             const success = await modifyAndSave((data) => {
                 if (!data.wishlists[currentUser.username]) {
                     data.wishlists[currentUser.username] = [];
@@ -423,12 +462,10 @@
 
         async function deleteItem(id) {
             if(!confirm("Delete this item?")) return;
-            
             const success = await modifyAndSave((data) => {
                 const list = data.wishlists[currentUser.username] || [];
                 data.wishlists[currentUser.username] = list.filter(i => i.id !== id);
             });
-
             if(success) renderItems();
         }
 
@@ -436,11 +473,8 @@
             const success = await modifyAndSave((data) => {
                 const list = data.wishlists[viewingUser.username] || [];
                 const item = list.find(i => i.id === itemId);
-                if(item) {
-                    item.purchased = !item.purchased;
-                }
+                if(item) item.purchased = !item.purchased;
             });
-
             if(success) renderItems();
         }
 
