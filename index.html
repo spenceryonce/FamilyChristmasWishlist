@@ -59,7 +59,7 @@
             <div class="space-y-4">
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Username</label>
-                    <input type="text" id="login-user" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none" placeholder="e.g. dad" autocapitalize="none">
+                    <input type="text" id="login-user" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm border p-2 focus:border-green-500 outline-none" placeholder="e.g. mom" autocapitalize="none">
                 </div>
                 <div>
                     <label class="block text-sm font-medium text-gray-700">Password</label>
@@ -88,17 +88,17 @@
                     <h2 id="list-owner-name" class="text-3xl font-bold text-gray-800"></h2>
                     <p class="text-gray-500 text-sm">Christmas 2025</p>
                 </div>
-                <button id="btn-add-item" onclick="toggleAddForm()" class="hidden bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 text-sm font-bold flex items-center gap-2">
+                <button id="btn-add-item" onclick="openForm()" class="hidden bg-green-600 text-white px-4 py-2 rounded shadow hover:bg-green-700 text-sm font-bold flex items-center gap-2">
                     <span>+ Add Gift</span>
                 </button>
             </div>
 
-            <div id="add-item-form" class="hidden bg-white p-6 rounded-lg shadow-md mb-8 border border-green-100 relative">
-                <h3 class="font-bold text-lg mb-4 text-green-800">Add a Wish</h3>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div id="item-form-modal" class="hidden bg-white p-6 rounded-lg shadow-md mb-8 border border-green-100 relative scroll-mt-20">
+                <h3 id="form-title" class="font-bold text-lg mb-4 text-green-800">Add a Wish</h3>
+                <input type="hidden" id="edit-item-id"> <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div class="md:col-span-2">
                          <label class="text-xs font-bold text-gray-500 uppercase">Category</label>
-                        <select id="new-item-cat" class="border p-2 rounded w-full bg-gray-50">
+                        <select id="form-cat" class="border p-2 rounded w-full bg-gray-50">
                             <option value="need">Something I Need</option>
                             <option value="wear">Something to Wear</option>
                             <option value="read">Something to Read</option>
@@ -107,20 +107,20 @@
                     </div>
                     <div>
                         <label class="text-xs font-bold text-gray-500 uppercase">Item Name</label>
-                        <input id="new-item-name" type="text" placeholder="e.g. Lego Star Wars" class="border p-2 rounded w-full">
+                        <input id="form-name" type="text" placeholder="e.g. Lego Star Wars" class="border p-2 rounded w-full">
                     </div>
                     <div>
                         <label class="text-xs font-bold text-gray-500 uppercase">Image URL (Optional)</label>
-                        <input id="new-item-img" type="text" placeholder="https://..." class="border p-2 rounded w-full">
+                        <input id="form-img" type="text" placeholder="https://..." class="border p-2 rounded w-full">
                     </div>
                     <div class="md:col-span-2">
                         <label class="text-xs font-bold text-gray-500 uppercase">Website Link</label>
-                        <input id="new-item-link" type="text" placeholder="https://amazon.com/..." class="border p-2 rounded w-full">
+                        <input id="form-link" type="text" placeholder="https://amazon.com/..." class="border p-2 rounded w-full">
                     </div>
                 </div>
                 <div class="mt-4 flex gap-2 justify-end">
-                    <button type="button" onclick="toggleAddForm()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Cancel</button>
-                    <button type="button" onclick="saveNewItem()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 shadow">Save to List</button>
+                    <button type="button" onclick="closeForm()" class="bg-gray-200 text-gray-700 px-4 py-2 rounded hover:bg-gray-300">Cancel</button>
+                    <button type="button" onclick="saveItem()" class="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 shadow" id="form-submit-btn">Save to List</button>
                 </div>
             </div>
 
@@ -151,7 +151,7 @@
         let currentUser = null;
         let viewingUser = null;
 
-        // --- INIT APP (Fixes Refresh Bug) ---
+        // --- INIT APP ---
         window.addEventListener('DOMContentLoaded', async () => {
             const savedUser = localStorage.getItem('xmas_user');
             if (savedUser) {
@@ -329,7 +329,7 @@
             });
         }
 
-        // --- WISHLIST LOGIC (UPDATED WITH OWNERSHIP) ---
+        // --- WISHLIST LOGIC ---
 
         function loadWishlist(targetUsername) {
             viewingUser = appData.users.find(u => u.username === targetUsername);
@@ -341,7 +341,7 @@
             const addBtn = document.getElementById('btn-add-item');
             isMyList ? addBtn.classList.remove('hidden') : addBtn.classList.add('hidden');
             
-            document.getElementById('add-item-form').classList.add('hidden');
+            closeForm(); // Ensure closed
             renderItems();
         }
 
@@ -376,10 +376,8 @@
                     card.className = `bg-white p-4 rounded-lg shadow-sm border border-gray-100 flex gap-4 relative overflow-hidden group`;
                     
                     let overlay = '';
-                    let actionButton = '';
+                    let actionArea = '';
 
-                    // LOGIC: Is this bought?
-                    // It is bought if: 1. It has a 'purchasedBy' user OR 2. It has 'purchased: true' (Legacy)
                     const boughtByMe = item.purchasedBy === currentUser.username;
                     const isLegacyBought = item.purchased === true;
                     const isBought = item.purchasedBy || isLegacyBought;
@@ -387,9 +385,6 @@
                     if (!isMyList) {
                         // VIEWING OTHERS
                         if (isBought) {
-                            // Logic: Can I undo this?
-                            // Only if I bought it. If it's legacy or bought by someone else, NO undo.
-                            
                             let undoBtn = '';
                             let label = '🎁 BOUGHT';
                             
@@ -397,7 +392,6 @@
                                 label = 'YOU BOUGHT THIS';
                                 undoBtn = `<button type="button" onclick="togglePurchased(${item.id})" class="mt-2 text-xs bg-white text-green-800 px-3 py-1 rounded hover:bg-gray-100 font-bold border border-green-200">Undo</button>`;
                             } else {
-                                // Bought by someone else or Legacy. No Undo allowed.
                                 undoBtn = `<span class="mt-2 text-[10px] text-white opacity-80 uppercase tracking-wider font-normal">No peeking</span>`;
                             }
 
@@ -408,17 +402,26 @@
                                 </div>
                             `;
                         } else {
-                            // Not bought yet
-                            actionButton = `<button type="button" onclick="togglePurchased(${item.id})" class="mt-3 w-full py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition">Mark as Purchased</button>`;
+                            actionArea = `<button type="button" onclick="togglePurchased(${item.id})" class="mt-3 w-full py-1.5 text-sm font-medium text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded transition">Mark as Purchased</button>`;
                         }
                     } else {
                         // VIEWING MYSELF (Owner)
-                        // Owner sees Remove button (purchased status is hidden)
-                        actionButton = `<button type="button" onclick="deleteItem(${item.id})" class="mt-3 text-xs text-red-400 hover:text-red-600 underline">Remove Item</button>`;
+                        // Shows Edit and Remove buttons
+                        actionArea = `
+                            <div class="mt-3 flex gap-3 border-t pt-2">
+                                <button type="button" onclick="startEdit(${item.id})" class="flex-1 text-xs text-blue-500 hover:text-blue-700 py-1 border border-blue-200 rounded hover:bg-blue-50 flex items-center justify-center gap-1">
+                                    ✏️ Edit
+                                </button>
+                                <button type="button" onclick="deleteItem(${item.id})" class="flex-1 text-xs text-red-400 hover:text-red-600 py-1 hover:bg-red-50 rounded">
+                                    Remove
+                                </button>
+                            </div>
+                        `;
                     }
 
                     const imgUrl = item.img || 'https://placehold.co/100x100?text=Gift';
 
+                    // FIX: Removed 'truncate' from H4, added break-words
                     card.innerHTML = `
                         ${overlay}
                         <div class="w-24 h-24 flex-shrink-0">
@@ -426,10 +429,10 @@
                         </div>
                         <div class="flex-1 min-w-0 flex flex-col justify-between">
                             <div>
-                                <h4 class="font-bold text-gray-800 truncate" title="${item.name}">${item.name}</h4>
-                                <a href="${item.link}" target="_blank" class="text-blue-500 text-sm hover:underline block truncate mt-1">Visit Website ↗</a>
+                                <h4 class="font-bold text-gray-800 break-words text-sm leading-snug" title="${item.name}">${item.name}</h4>
+                                <a href="${item.link}" target="_blank" class="text-blue-500 text-xs hover:underline block truncate mt-1">Visit Website ↗</a>
                             </div>
-                            ${actionButton}
+                            ${actionArea}
                         </div>
                     `;
                     itemGrid.appendChild(card);
@@ -439,47 +442,102 @@
             });
         }
 
-        // --- ACTIONS ---
+        // --- ADD / EDIT FORM LOGIC ---
 
-        function toggleAddForm() {
-            document.getElementById('add-item-form').classList.toggle('hidden');
+        function openForm(mode = 'create') {
+            document.getElementById('item-form-modal').classList.remove('hidden');
+            // Scroll to form on mobile
+            document.getElementById('item-form-modal').scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
 
-        async function saveNewItem() {
-            const cat = document.getElementById('new-item-cat').value;
-            const name = document.getElementById('new-item-name').value;
-            const link = document.getElementById('new-item-link').value;
-            const img = document.getElementById('new-item-img').value;
+        function closeForm() {
+            document.getElementById('item-form-modal').classList.add('hidden');
+            // Reset fields
+            document.getElementById('edit-item-id').value = '';
+            document.getElementById('form-name').value = '';
+            document.getElementById('form-link').value = '';
+            document.getElementById('form-img').value = '';
+            document.getElementById('form-cat').value = 'need';
+            
+            // Reset UI text
+            document.getElementById('form-title').innerText = "Add a Wish";
+            document.getElementById('form-submit-btn').innerText = "Save to List";
+        }
+
+        function startEdit(id) {
+            const item = appData.wishlists[currentUser.username].find(i => i.id === id);
+            if(!item) return;
+
+            // Populate Form
+            document.getElementById('edit-item-id').value = item.id;
+            document.getElementById('form-name').value = item.name;
+            document.getElementById('form-link').value = item.link || '';
+            document.getElementById('form-img').value = item.img || '';
+            document.getElementById('form-cat').value = item.category;
+
+            // Change UI text
+            document.getElementById('form-title').innerText = "Edit Wish";
+            document.getElementById('form-submit-btn').innerText = "Update Gift";
+
+            openForm('edit');
+        }
+
+        async function saveItem() {
+            const editId = document.getElementById('edit-item-id').value; // String or empty
+            const cat = document.getElementById('form-cat').value;
+            const name = document.getElementById('form-name').value;
+            const link = document.getElementById('form-link').value;
+            const img = document.getElementById('form-img').value;
 
             if(!name) return alert("Please enter a name!");
 
-            const newItem = {
-                id: Date.now(),
+            // Prepare Payload (Without ID yet)
+            const itemPayload = {
                 category: cat,
                 name: name,
                 link: link,
                 img: img
-                // We do NOT set purchased properties here
             };
 
             const success = await modifyAndSave((data) => {
                 if (!data.wishlists[currentUser.username]) {
                     data.wishlists[currentUser.username] = [];
                 }
-                data.wishlists[currentUser.username].push(newItem);
+                
+                const list = data.wishlists[currentUser.username];
+
+                if(editId) {
+                    // UPDATE EXISTING
+                    // We must find by numeric ID (editId is string from hidden input)
+                    const index = list.findIndex(i => i.id == editId);
+                    if(index !== -1) {
+                        // Merge new data, preserving ID and Purchased status
+                        list[index] = {
+                            ...list[index],
+                            ...itemPayload
+                        };
+                    }
+                } else {
+                    // CREATE NEW
+                    const newItem = {
+                        id: Date.now(),
+                        ...itemPayload,
+                        // Ensure fresh bought status
+                        purchased: false,
+                        purchasedBy: undefined 
+                    };
+                    list.push(newItem);
+                }
             });
 
             if(success) {
-                document.getElementById('new-item-name').value = '';
-                document.getElementById('new-item-link').value = '';
-                document.getElementById('new-item-img').value = '';
-                toggleAddForm();
+                closeForm();
                 renderItems();
             }
         }
 
         async function deleteItem(id) {
-            if(!confirm("Delete this item?")) return;
+            if(!confirm("Remove this item completely?")) return;
             const success = await modifyAndSave((data) => {
                 const list = data.wishlists[currentUser.username] || [];
                 data.wishlists[currentUser.username] = list.filter(i => i.id !== id);
@@ -493,16 +551,12 @@
                 const item = list.find(i => i.id === itemId);
                 
                 if(item) {
-                    // LOGIC:
-                    // 1. If currently marked by ME -> Unmark it.
                     if (item.purchasedBy === currentUser.username) {
                         delete item.purchasedBy;
                     }
-                    // 2. If it is NOT marked by anyone (and not legacy bought) -> Mark it as ME.
                     else if (!item.purchasedBy && item.purchased !== true) {
                         item.purchasedBy = currentUser.username;
                     }
-                    // 3. If marked by someone else or Legacy -> Do nothing (security)
                 }
             });
             if(success) renderItems();
